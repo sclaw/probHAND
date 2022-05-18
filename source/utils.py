@@ -292,7 +292,7 @@ def array2raster(array, raster_template_uri, raster_uri,raster_output_settings =
     
         stem = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         raster_proj_uri = os.path.join(stem, 'Data/LCB/HAND/LCB_HAND_7point4m.tif')
-        proj = get_raster_projection(raster_proj_uri)
+        proj = get_raster_projection(raster_template_uri)
 
     ### Create raster
     driver = gdal.GetDriverByName('GTiff')
@@ -484,31 +484,49 @@ def line2points(line_uri, points_uri, id_field):
         feat_code = int(feat.GetField('Code'))
         line_str = feat.GetGeometryRef()
 
-        ### Iterate through point coordinates in line feature
-        for i in range(0, line_str.GetPointCount()):
-            ### Get point coordinates
-            pt_coords = line_str.GetPoint(i)
-            pt_obj = ogr.Geometry(ogr.wkbPoint)
-            pt_obj.AddPoint(pt_coords[0], pt_coords[1])
+        if line_str.GetGeometryName() == 'LINESTRING':
+            for pt in line_str.GetPoints():
+                ### Get point coordinates
+                pt_obj = ogr.Geometry(ogr.wkbPoint)
+                pt_obj.AddPoint(pt[0], pt[1])
 
-            ### Add point feature to points layer
-            feat_def = points_lyr.GetLayerDefn()
-            point_feat = ogr.Feature(feat_def)
-            point_feat.SetGeometry(pt_obj)
-            point_feat.SetField(id_field, feat_code)
-            points_lyr.CreateFeature(point_feat)
-            point_feat = None
+                ### Add point feature to points layer
+                feat_def = points_lyr.GetLayerDefn()
+                point_feat = ogr.Feature(feat_def)
+                point_feat.SetGeometry(pt_obj)
+                point_feat.SetField(id_field, feat_code)
+                points_lyr.CreateFeature(point_feat)
+                point_feat = None
+        elif line_str.GetGeometryName() == 'MULTILINESTRING':
+            for sub_line in line_str:
+                for pt in sub_line.GetPoints():
+                    ### Get point coordinates
+                    pt_obj = ogr.Geometry(ogr.wkbPoint)
+                    pt_obj.AddPoint(pt[0], pt[1])
+
+                    ### Add point feature to points layer
+                    feat_def = points_lyr.GetLayerDefn()
+                    point_feat = ogr.Feature(feat_def)
+                    point_feat.SetGeometry(pt_obj)
+                    point_feat.SetField(id_field, feat_code)
+                    points_lyr.CreateFeature(point_feat)
+                    point_feat = None
 
     return None
 
 
-def thiessen_polygons(points_uri, polygon_uri, output_dir):
+def thiessen_polygons(points_uri, polygon_uri, output_dir, hand_uri):
     # Static variables
     unique_field = 'Code'
-    output_pixel_size = 1
+
+    # Get output raster resolution
+    hand_data = gdal.Open(hand_uri)
+    transform = {'transform': hand_data.GetGeoTransform(),
+                 'x_size': hand_data.RasterXSize,
+                 'y_size': hand_data.RasterYSize}
 
     processor = Thiessen()
-    processor.generate_voronoi(points_uri, polygon_uri, output_dir, unique_field, output_pixel_size)
+    processor.generate_voronoi(points_uri, polygon_uri, output_dir, unique_field, transform)
 
     return None
 

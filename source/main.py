@@ -42,6 +42,7 @@ def main():
     parser.add_argument('-resolutions', dest='resolutions', default=None)
     parser.add_argument('-percentiles', dest='percentiles', default=None)
     parser.add_argument('-reach_type', dest='reach_type', default='NHD')
+    parser.add_argument('-data_folder', dest='data_folder', default=None)
     args = parser.parse_args()
 
 
@@ -85,10 +86,10 @@ def main():
     if args.percentiles == None:    
         percentiles = [5, 10, 25, 50, 75, 90, 95]
     else:
-        percentiles = args.percentiles
+        percentiles = [int(ri) for ri in args.percentiles.strip('[]').split(',')]
 
     ### Execute driver.py script
-    driver.execute(huc8, huc12_list, n, resolutions, percentiles,args.reach_type) 
+    driver.execute(huc8, huc12_list, n, resolutions, percentiles, args.reach_type, args.data_folder)
 
     return None
 

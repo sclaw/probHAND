@@ -3,12 +3,14 @@ from scipy.spatial import Voronoi
 from osgeo import ogr, gdal
 import os
 import numpy as np
+import math
 
 # Hardcoded values if script is run standalone
 #SRC_PATH = r"D:\HAND\mad_river\Data\Winooski_River\Stream_Polylines\NHD"
-SRC_PATH = r"D:\HAND\mad_river\Data\Winooski_River\Stream_Points\NHD"
-DEST_PATH = r"D:\HAND\mad_river\Data\Winooski_River\Thiessen_Polygons\NHD"
-CLIP_PATH = r"D:\HAND\mad_river\Data\Winooski_River\Watershed"
+SRC_PATH = r"D:\HAND\mad_river\Data\Missisquoi_River\Stream_Points\NHD"
+DEST_PATH = r"D:\HAND\mad_river\Data\Missisquoi_River\Thiessen_Polygons\NHD"
+CLIP_PATH = r"D:\HAND\mad_river\Data\Missisquoi_River\Watershed"
+HAND_PATH = r'D:\HAND\mad_river\Data\Missisquoi_River\HAND'
 
 
 class Thiessen:
@@ -16,7 +18,7 @@ class Thiessen:
     def __init__(self):
         self.unique_field = None
         self.unique_field_type = None
-        self.pixel_size = None
+        self.output_transform = None
         self.crs = None
 
     def extract_stream_points_from_polylines(self, path):
@@ -187,13 +189,9 @@ class Thiessen:
         driver.DeleteDataSource(tmp_path)
 
         # Create output Thiessen raster
-        raster_out_path = os.path.join(out_directory, f'thiessen_{self.pixel_size}m.tif')
-        x_min, x_max, y_min, y_max = layer_clipped.GetExtent()
-        pixel_size = self.pixel_size
-        x_res = int((x_max - x_min) / pixel_size)
-        y_res = int((y_max - y_min) / pixel_size)
-        target_ds = gdal.GetDriverByName('GTiff').Create(raster_out_path, x_res, y_res, 1, gdal.GDT_Int32)
-        target_ds.SetGeoTransform((x_min, pixel_size, 0, y_max, 0, -pixel_size))
+        raster_out_path = os.path.join(out_directory, f'thiessen_{int(self.output_transform["transform"][1])}m.tif')
+        target_ds = gdal.GetDriverByName('GTiff').Create(raster_out_path, self.output_transform['x_size'], self.output_transform['y_size'], 1, gdal.GDT_Int32)
+        target_ds.SetGeoTransform(self.output_transform['transform'])
         target_ds.SetProjection(self.crs.ExportToWkt())
         band = target_ds.GetRasterBand(1)
         band.SetNoDataValue(-9999)
@@ -201,10 +199,10 @@ class Thiessen:
         # Rasterize clipped polygon shapefile
         gdal.RasterizeLayer(target_ds, [1], layer_clipped, options=['ATTRIBUTE=Code'])
 
-    def generate_voronoi(self, src_path, clip_path, out_directory, unique_field, output_pixel_size, in_type='points'):
+    def generate_voronoi(self, src_path, clip_path, out_directory, unique_field, output_transform, in_type='points'):
         # Initiate variables
         self.unique_field = unique_field
-        self.pixel_size = output_pixel_size
+        self.output_transform = output_transform
 
         # Create Voronoi polygons'
         if in_type == 'points':
@@ -212,36 +210,44 @@ class Thiessen:
         elif in_type == 'lines':
             network_pts = self.extract_stream_points_from_polylines(src_path)
         clip_pts = self.extract_clip_points(clip_path)
-        thiessen_polygons = self.process_thiessen(network_pts, clip_pts)
-        self.export_voronoi(thiessen_polygons, out_directory, clip_path)
+        polygons = self.process_thiessen(network_pts, clip_pts)
+        self.export_voronoi(polygons, out_directory, clip_path)
 
 
-def thiessen_polygons(points_uri, polygon_uri, out_directory, in_type='points'):
+def thiessen_polygons(points_uri, polygon_uri, out_directory, hand_uri, in_type='points'):
     # Static variables
     UNIQUE_FIELD = 'Code'
-    OUTPUT_PIXEL_SIZE = 1
+
+    # Get output raster resolution
+    hand_data = gdal.Open(hand_uri)
+    transform = {'transform': hand_data.GetGeoTransform(),
+                 'x_size': hand_data.RasterXSize,
+                 'y_size': hand_data.RasterYSize}
 
     processor = Thiessen()
-    processor.generate_voronoi(points_uri, polygon_uri, out_directory, UNIQUE_FIELD, OUTPUT_PIXEL_SIZE, in_type=in_type)
+    processor.generate_voronoi(points_uri, polygon_uri, out_directory, UNIQUE_FIELD, transform, in_type=in_type)
 
     return None
 
 
 def main():
     #reach_list = [p[:-8] for p in os.listdir(SRC_PATH) if p[-3:] == 'shp']
-    reach_list = ['WIN_0702']
+    reach_list = ["MSQ_0101", "MSQ_0102", "MSQ_0103", "MSQ_0104", "MSQ_0105", "MSQ_0202","MSQ_0203","MSQ_0204","MSQ_0301","MSQ_0302","MSQ_0401","MSQ_0402","MSQ_0501","MSQ_0502","MSQ_0503","MSQ_0601","MSQ_0602","MSQ_0603"]
     counter = 1
     times = []
     for reach in reach_list:
         t1 = time.perf_counter()
         print('{} / {}'.format(counter, len(reach_list)))
         counter += 1
+        hand_path = os.path.join(HAND_PATH, f'{reach}_thresh-5179976_HAND.tif')
         #poly_path = os.path.join(SRC_PATH, reach + '_NHD.shp')
         poly_path = os.path.join(SRC_PATH, f'HUC12_{reach[-4:]}', 'stream_points.shp')
         clip_path = os.path.join(CLIP_PATH, reach + '.shp')
         dest_path = os.path.join(DEST_PATH, f'HUC12_{reach[-4:]}')
+        if not os.path.exists(dest_path):
+            os.mkdir(dest_path)
         #thiessen_polygons(poly_path, clip_path, dest_path, in_type='lines')
-        thiessen_polygons(poly_path, clip_path, dest_path)
+        thiessen_polygons(poly_path, clip_path, dest_path, hand_path)
         times.append(time.perf_counter() - t1)
     print('average time per basin was {} seconds'.format(round(sum(times) / len(times), 2)))
 

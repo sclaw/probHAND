@@ -11,7 +11,7 @@ import itertools
 import numpy as np
 import pandas as pd
 
-from time import time, ctime
+from time import time, ctime, perf_counter
 from scipy import interpolate
 from datetime import datetime
 
@@ -20,7 +20,7 @@ import constants, paths, preprocessing, utils
 ### Ignore all numpy errors
 np.seterr(all='ignore')
 
-def execute(ws, huc12_list, n, resolutions, percentiles,reach_type):
+def execute(ws, huc12_list, n, resolutions, percentiles, reach_type, data_folder):
     """Execute model functions, depending on boolean operators in driver_args.
 
     Parameters:
@@ -60,11 +60,10 @@ def execute(ws, huc12_list, n, resolutions, percentiles,reach_type):
             ### Get paths_dict from paths.py
             ### ws ==> HUC8 long-form name (IE Winooski_River)
             ### ws_id ==> HUC8 abbreviation (IE WIN)
-            paths_dict = paths.gen_paths(ws, ws_id, huc12_id,reach_type)
+            paths_dict = paths.gen_paths(ws, ws_id, huc12_id, reach_type, data_folder)
 
 
             if constants.only_generate_HAND:
-                
                 preprocess_data(paths_dict, cellsize)
             else:
                 ### Preprocess data
@@ -96,7 +95,6 @@ def execute(ws, huc12_list, n, resolutions, percentiles,reach_type):
 def preprocess_data(paths_dict, cellsize):
 
     ### Generate HAND layer
-    breakhere=1
     preprocessing.generate_hand(paths_dict)
     
     ### Resample HAND and LULC layers to a lower resolution
@@ -114,42 +112,112 @@ def preprocess_data(paths_dict, cellsize):
     return paths_dict
 
 
-def monte_carlo(paths_dict, data_dict, rvs_dict, n, huc12_id, 
-                ws_id, cellsize, rc_df, RIstage_df):
-
+def monte_carlo(paths_dict, data_dict, rvs_dict, n, huc12_id, ws_id, cellsize, rc_df, RIstage_df):
     ### Initialize reach list from stream stats
     ss_df = data_dict['streamstats_df']
-    ss_df2 = ss_df[ss_df['Huc12']=='%s_%s' %(ws_id, huc12_id)]
+    ss_df2 = ss_df[ss_df['Huc12'] == '%s_%s' % (ws_id, huc12_id)]
     reach_list = pd.Series(ss_df2['Name'].unique())
 
     stream_df = data_dict['stream_df']
-    
-    #Check that the reaches consist of a single polyline
+
+    # Check that the reaches consist of a single polyline
     max_segments_per_reach = stream_df.groupby(['Code']).count()['Length'].max()
     if max_segments_per_reach != 1:
-        print("******\n   ERROR: a reach segment consists of {} polylines - exiting\n******".format(max_segments_per_reach))
-        return 
-    
-    reach_list = list(reach_list[reach_list.isin(stream_df['Code'])])       
+        print("******\n   ERROR: a reach segment consists of {} polylines - exiting\n******".format(
+            max_segments_per_reach))
+        return
 
-    ### Iterate through simulations
-    for i in range(n):
-        params_dict = utils.rvs2dict(i, rvs_dict)
+    reach_list = sorted(list(reach_list[reach_list.isin(stream_df['Code'])]))
 
-        if i%(n/10) == 0: 
-            print ('\t%s - Starting iteration #%d' %(ctime(), i))
+    stage_array = np.array(constants.stage_list, dtype=np.float64)
 
-        if i==0:
-            rc_df = generate_base_rc(i, rc_df,   data_dict, reach_list, cellsize)
+    # Generate base RC
+    print(f'\t{ctime()} - Generating base rating curves')
+    spoof_rc_df = pd.DataFrame()
+    base_rc = generate_base_rc(0, spoof_rc_df, data_dict, reach_list, cellsize)
+
+    length_log = list()
+    sa_log = list()
+    volume_log = list()
+    mannings_log = list()
+    h_radius_log = list()
+    slope_log = list()
+    xs_area_log = list()
+    rc_q_log = list()
+
+    q_log = list()
+    stage_log = list()
+
+    reach_counter = 0
+    for reach in reach_list:
+        print(f'\t{ctime()} - Starting reach {reach_counter} of {len(reach_list)}')
+        reach_counter += 1
+        # Generate RC
+        relevant_rows = base_rc[(base_rc['REACH'] == reach)]
+        base_params = np.array(relevant_rows[['MANNINGS', 'H_RADIUS', 'SLOPE', 'XS_AREA']], dtype=np.float64)
+        reach_slope = base_params[0][2]
+        reach_length = relevant_rows['LENGTH'].iloc[0]
+
+        length_log.extend([reach_length] * n * len(constants.stage_list))
+        sa_log.extend(np.tile(relevant_rows.sort_values('STAGE')['SA'], n))
+        volume_log.extend(np.tile(relevant_rows.sort_values('STAGE')['VOLUME'], n))
+
+        # Generate RV array
+        intervals_sorted = [f'Q{i}' for i in sorted(constants.interval_list)]
+        q_rvs = np.array([rvs_dict['discharge_rvs_dict'][a] for a in intervals_sorted]).transpose()
+        if reach_slope < 0.001:
+            rv_subset = np.array([rvs_dict['mannings_rvs'], rvs_dict['low_grade_xsarea_rvs'],
+                                  rvs_dict['low_grade_slope_rvs'], rvs_dict['low_grade_xsarea_rvs']],
+                                 dtype=np.float64).transpose()
         else:
-            rc_df = generate_rc_frombase(i, rc_df, params_dict, reach_list, cellsize)
+            rv_subset = np.array([rvs_dict['mannings_rvs'], rvs_dict['high_grade_xsarea_rvs'],
+                                  rvs_dict['high_grade_slope_rvs'], rvs_dict['high_grade_xsarea_rvs']],
+                                 dtype=np.float64).transpose()
+        q_rvs += 1
+        rv_subset += 1
 
-        ### Get stage for each reach for each recurrance interval
-        for yr, reach in itertools.product(constants.interval_list, reach_list):
-            reach_stage_dict = get_reach_stage(
-                i, huc12_id, ws_id, rc_df, data_dict, 
-                params_dict, yr, cellsize, reach)
-            RIstage_df = RIstage_df.append(reach_stage_dict, ignore_index=True)
+        ss_q_values_base = np.array(sorted(ss_df[(ss_df['Huc12'] == '%s_%s' % (ws_id, huc12_id)) & (ss_df['Name'] == reach)]['Value']), dtype=np.float64)
+        ss_q_values_base *= 0.0283168
+
+        for sim in range(n):
+            modified_params = np.multiply(base_params, rv_subset[sim]).transpose()
+            rc_q_values = ((1 / modified_params[0]) * np.power(modified_params[1], (2.0 / 3.0)) * (np.sqrt(modified_params[2])) * (modified_params[3]))
+            ss_q_values = np.multiply(ss_q_values_base, q_rvs[sim])
+            ss_stage_values = np.interp(ss_q_values, rc_q_values, stage_array)
+
+            mannings_log.extend(modified_params[0])
+            h_radius_log.extend(modified_params[1])
+            slope_log.extend(modified_params[2])
+            xs_area_log.extend(modified_params[3])
+            rc_q_log.extend(rc_q_values)
+            q_log.extend(ss_q_values)
+            stage_log.extend(ss_stage_values)
+
+    rc_df = pd.DataFrame()
+    RIstage_df = pd.DataFrame()
+
+    n_counter = list(range(n))
+    rc_df.insert(0, 'RESOLUTION', [cellsize] * len(constants.stage_list) * n * len(reach_list))
+    rc_df.insert(1, 'N_SIM', np.tile(np.repeat(n_counter, len(constants.stage_list)), len(reach_list)))
+    rc_df.insert(2, 'REACH', np.repeat(reach_list, n * len(constants.stage_list)))
+    rc_df.insert(3, 'STAGE', np.tile(constants.stage_list, n * len(reach_list)))
+    rc_df.insert(4, 'LENGTH', length_log)
+    rc_df.insert(5, 'SA', sa_log)
+    rc_df.insert(6, 'VOLUME', volume_log)
+    rc_df.insert(7, 'XS_AREA', xs_area_log)
+    rc_df.insert(7, 'H_RADIUS', h_radius_log)
+    rc_df.insert(7, 'MANNINGS', mannings_log)
+    rc_df.insert(7, 'SLOPE', slope_log)
+    rc_df.insert(7, 'DISCHARGE', rc_q_log)
+
+
+    RIstage_df.insert(0, 'RESOLUTION', [cellsize] * len(constants.interval_list) * n * len(reach_list))
+    RIstage_df.insert(1, 'N_SIM', np.tile(np.repeat(n_counter, len(constants.interval_list)), len(reach_list)))
+    RIstage_df.insert(2, 'REACH', np.repeat(reach_list, n * len(constants.interval_list)))
+    RIstage_df.insert(3, 'RI', np.tile(sorted(constants.interval_list), n * len(reach_list)))
+    RIstage_df.insert(4, 'Q', q_log)
+    RIstage_df.insert(5, 'STAGE', stage_log)
+
     return rc_df, RIstage_df
 
 
@@ -171,77 +239,79 @@ def generate_base_rc(i, rc_df, data_dict, reach_list, cellsize):
     streampoints_df = data_dict['streampoints_df']
     stream_df = data_dict['stream_df']
 
+    ### Preprocess masks
+    stage_masks = dict()
+    for stage in constants.stage_list:
+        stage_masks[stage] = (hand_array <= stage)
+    reach_masks = dict()
+    for reach in reach_list:
+        reach_masks[reach] = (thiessen_array==reach)
+
     ### Iterate over through user-specified stages and over reaches in HUC12
-    for stage, reach in itertools.product(constants.stage_list, reach_list):
-        reach = float(reach)
+    for stage in constants.stage_list:
+        for reach in reach_list:
+            reach = float(reach)
 
-        ### Subset HAND array to where HAND is <= to stage 
-        mask = (hand_array<=stage) & (thiessen_array==reach)
-        hand_array_masked = hand_array[mask]
+            ### Subset HAND array to where HAND is <= to stage
+            mask = stage_masks[stage] & reach_masks[reach]
+            hand_array_masked = hand_array[mask]
 
-        ### Calculate volume & surface area
-        volume = np.nansum(stage - hand_array_masked) * (cellsize**2)
-        surface_area = (np.count_nonzero(~np.isnan(hand_array_masked)) * 
-                       (cellsize**2))
-        
-        ### Calculate cross-sectional area
-        length = float(stream_df['Length'][stream_df['Code']==reach])
-        # length = float(stream_df['SWLENGTH'][stream_df['Code']==reach])
-        xs_area = volume / length
-        
-        ### Calculate hydraulic radius
-        hydraulic_radius = volume / surface_area
-        
-        ### Calculate average Manning's coefficient, weighted by volume
-        n_array_masked = n_array[mask]
-        n_volume_total = 0
+            ### Calculate volume & surface area
+            volume = np.nansum(stage - hand_array_masked) * (cellsize**2)
+            surface_area = (np.count_nonzero(~np.isnan(hand_array_masked)) *
+                           (cellsize**2))
 
-        for n in np.unique(n_array_masked[n_array_masked!=0]):
-            hand_subset = hand_array_masked[n_array_masked==n]
+            ### Calculate cross-sectional area
+            length = float(stream_df['Length'][stream_df['Code']==reach])
+            # length = float(stream_df['SWLENGTH'][stream_df['Code']==reach])
+            xs_area = volume / length
 
-            n_volume = np.nansum(stage - hand_subset) * cellsize**2
-            n_volume_total += (n_volume * n)
+            ### Calculate hydraulic radius
+            hydraulic_radius = volume / surface_area
 
-        mannings_mean = n_volume_total / volume
+            ### Calculate average Manning's coefficient, weighted by volume
+            n_array_masked = n_array[mask]
+            n_volume_total = 0
 
-        if mannings_mean == 0:
-            mannings_mean = 0.089666666666 # Avg of all Manning's values
-        
-        ### Calculate slope based on DEM min and max
-        streampoints_df2 = streampoints_df[
-            streampoints_df['Code']==reach]
-        elev_min = streampoints_df2['ELEV'].min()
-        elev_max = streampoints_df2['ELEV'].max()
-        slope = (elev_max - elev_min) / length
+            volume_array = stage - hand_array_masked
+            volume_array *= n_array_masked
+            n_volume_total = np.nansum(volume_array)
 
-        ### If calculated slope is < 0.00001, use NHD+ slope instead
-        if slope < 0.00001:
-            slope = float(stream_df['SloNHDcalc']
-                [stream_df['Code']==reach])
+            mannings_mean = n_volume_total / volume
 
-            ### If NHD+ slope is still less than 0.00001, set to 0.00001
+            if mannings_mean == 0:
+                mannings_mean = 0.089666666666 # Avg of all Manning's values
+
+            ### Calculate slope based on DEM min and max
+            streampoints_df2 = streampoints_df[
+                streampoints_df['Code']==reach]
+            elev_min = streampoints_df2['ELEV'].min()
+            elev_max = streampoints_df2['ELEV'].max()
+            slope = (elev_max - elev_min) / length
+
+            ### If calculated slope is < 0.00001, use 0.00001 instead
             if slope < 0.00001: slope = 0.00001
 
-        ### Calculate Q using Mannings equation
-        Q = ((1 / mannings_mean) * np.power(hydraulic_radius, (2.0/3.0)) * 
-             (np.sqrt(slope)) * (xs_area))
-        if volume == 0: Q = 0
+            ### Calculate Q using Mannings equation
+            Q = ((1 / mannings_mean) * np.power(hydraulic_radius, (2.0/3.0)) *
+                 (np.sqrt(slope)) * (xs_area))
+            if volume == 0: Q = 0
 
-        rc_row_dict = {
-            'N_SIM': int(i),
-            'RESOLUTION': cellsize, 
-            'REACH': int(reach),
-            'STAGE': stage,
-            'LENGTH': length,
-            'VOLUME': volume,
-            'SA': surface_area,
-            'XS_AREA': xs_area,
-            'H_RADIUS': hydraulic_radius,
-            'MANNINGS': mannings_mean,
-            'SLOPE': slope,
-            'DISCHARGE': Q
-            }
-        rc_df = rc_df.append(rc_row_dict, ignore_index=True)
+            rc_row_dict = {
+                'N_SIM': int(i),
+                'RESOLUTION': cellsize,
+                'REACH': int(reach),
+                'STAGE': stage,
+                'LENGTH': length,
+                'VOLUME': volume,
+                'SA': surface_area,
+                'XS_AREA': xs_area,
+                'H_RADIUS': hydraulic_radius,
+                'MANNINGS': mannings_mean,
+                'SLOPE': slope,
+                'DISCHARGE': Q
+                }
+            rc_df = rc_df.append(rc_row_dict, ignore_index=True)
 
     return rc_df
 

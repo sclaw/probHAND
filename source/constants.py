@@ -1,5 +1,5 @@
 ### Flag to only generate the HAND layer
-only_generate_HAND = True
+only_generate_HAND = False
 ### Adjust threshold
 '''
 The Dinfinity area calculation in TauDEM 5.3.7 reports "specific catchment

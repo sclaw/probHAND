@@ -10,7 +10,7 @@ import platform
 import constants
 
 
-def gen_paths(ws, ws_id, huc12_id,reach_type):
+def gen_paths(ws, ws_id, huc12_id, reach_type, data_folder):
     """Generate paths to directories, sub-directories, data input and 
         output files, and parameters.
     
@@ -31,7 +31,10 @@ def gen_paths(ws, ws_id, huc12_id,reach_type):
     '''
 
     ### Initialize path to data directory
-    stem = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    if not data_folder:
+        stem = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    else:
+        stem = data_folder
     data_dir = os.path.join(stem, 'Data')
 
     huc8_code = constants.huc8_code_dict[ws_id]
@@ -70,6 +73,7 @@ def gen_paths(ws, ws_id, huc12_id,reach_type):
         # 'huc8_stream_dir': os.path.join(data_dir, ws, 'DEM_Derivatives', 'HUC8_derivatives'),
         #Location to store the intermediate steps in generating the huc8 scale
         #flow accumulation raster
+        'huc8_derivatives_dir': os.path.join(data_dir, ws, 'DEM_Derivatives', 'HUC8_derivatives'),
         'temp_flow_acc_dir': os.path.join(data_dir, ws, 'DEM_Derivatives', 'HUC8_derivatives'),
         'huc8_streamline_dir': os.path.join(data_dir, ws, 'DEM_Derivatives', 'HUC8_derivatives'),
         #huc8-level pit-filled DEM

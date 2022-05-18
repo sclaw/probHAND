@@ -89,6 +89,7 @@ def generate_huc8_stream_network(paths_dict,f):
     flowacc_buff_uri = os.path.join(huc8_dem_derivatives_dir, 'flowacc_buff.tif') #output of AreaDinf
     huc8_dem_buffered_uri = paths_dict['huc8_dem_uri']
     dem_dir = paths_dict['dem_dir']
+    hand_uri = os.path.join(huc8_dem_derivatives_dir, 'HAND.tif')
         
     
     f.write('      Creating HUC8 DEM\n')
@@ -177,6 +178,10 @@ def generate_huc8_stream_network(paths_dict,f):
     nd_value = -999
     method='max'
     utils.resample_raster(huc8_stream_uri_5m, huc8_stream_uri_1m, pixel_size, method)
+
+    ### Generaet HUC-8 level HAND ###
+    args = ('8', flowdir_buff_uri, huc8_dem_buff_filled_uri, huc8_stream_uri_5m, hand_uri)
+    os.system('mpiexec -n %s DinfDistDown -ang "%s" -fel "%s" -src "%s" -dd "%s" -m v -nc' % args)
     
 
 # def generate_headwater_mask(paths_dict,f):
@@ -290,7 +295,7 @@ def generate_hand(paths_dict):
     with open(HAND_log_uri,'w') as f:
         
         f.write('Checking file hashes & deleting outdated derivative files')
-        #utils.check_file_hashes(paths_dict,f)
+        utils.check_file_hashes(paths_dict,f)
     
         ### Initialize paths to input data files
         dem_buffered_uri = paths_dict['dem_buff_uri'] #HUC12 DEM
@@ -298,8 +303,9 @@ def generate_hand(paths_dict):
         # ws_buff_uri = paths_dict['ws_buff_uri']
         ws_uri = paths_dict['ws_uri']
         huc8_stream_uri_1m = paths_dict['stream_huc8_uri']
-        
-    
+        huc8_hand_uri = os.path.join(paths_dict['huc8_derivatives_dir'], 'HAND.tif')
+
+
         ### Initialize path to DEM derivatives directory
         dem_derivates_dir = paths_dict['dem_derivates_dir']
         
@@ -316,8 +322,13 @@ def generate_hand(paths_dict):
         #testing files
         flowacc_buff_uri = os.path.join(dem_derivates_dir,'temp_flow_accumulation.tif')
         temp_stream_network = os.path.join(dem_derivates_dir,'temp_stream_network.tif')
-        
-            
+
+        ### If HUC8 HAND does not exist, generate it, so that it can be imputed later ###
+        if not os.path.exists(huc8_hand_uri):
+            print('HUC-8 level HAND for imputing needed.  Generating HUC-8 derivatives')
+            generate_huc8_stream_network(paths_dict, f)
+
+
         ### If HAND layer already exists, return None
         if os.path.exists(hand_uri):
             f.write('HAND layer already exists for the values in settings.txt\n')
@@ -367,54 +378,7 @@ def generate_hand(paths_dict):
             
             f.write('         mpiexec -n %s DinfFlowDir -fel "%s" -ang "%s" -slp "%s"\n\n' %args)
             os.system('mpiexec -n %s DinfFlowDir -fel "%s" -ang "%s" -slp "%s"' %args)
-    
-    ######## temp testing block
-        # f.write('      Calculate Flow Accumulation - Start\n')
-        # ### Calculate flow accumulation
-    
-        # if os.path.exists(flowacc_buff_uri):
-        #     f.write('         Flow accumulation raster exists, using existing\n\n')
-        # else:
-        #     f.write ('         Calculating flow accumulation from D-infinity flow direction\n')
-        #     args = ('8', flowdir_buff_uri, flowacc_buff_uri)
-            
-        #     f.write('         Call to AreaDinf\n')
-            
-        #     f.write('         mpiexec -n %s AreaDinf -ang "%s" -sca "%s" -nc\n\n' %args)
-        #     os.system('mpiexec -n %s AreaDinf -ang "%s" -sca "%s" -nc' %args)
-    
-        # ### Maximum flow accumulation is greater than threshold, adjust it
-        # f.write('         Calls to GDAL\n')
-        # f.write(f'            GDAL call: flowacc_buff_raster = gdal.Open({flowacc_buff_uri})\n')
-        # flowacc_buff_raster = gdal.Open(flowacc_buff_uri)
-        # f.write('            GDAL call: flowacc_buff_band = flowacc_buff_raster.GetRasterBand(1)\n')
-        # flowacc_buff_band = flowacc_buff_raster.GetRasterBand(1)
-        # f.write('            GDAL Call: flowacc_buff_stats = flowacc_buff_band.GetStatistics(True, True)\n')
-        # flowacc_buff_stats = flowacc_buff_band.GetStatistics(True, True)
-        # max_flowacc = flowacc_buff_stats[1]
-        # del flowacc_buff_raster
-    
-        # thresh = constants.threshold_flow
-        # while max_flowacc < thresh:
-        #     thresh *= 0.1
-    
-        # f.write('      Delineating Stream Network\n')
-        # ### Delineate stream network based on flow accumulation threshold
-        # if os.path.exists(temp_stream_network):
-        #     f.write(f'         Stream network raster exists for threshold: {constants.threshold_flow}, using existing raster\n\n')
-        # else:
-        #     f.write ('         Delineating stream network from flow accumulation raster\n\n')
-        #     args = ('8', flowacc_buff_uri, temp_stream_network, str(thresh))
-            
-        #     f.write('         mpiexec -n %s Threshold -ssa "%s" -src "%s" -thresh %s\n\n' %args)
-        #     os.system('mpiexec -n %s Threshold -ssa "%s" -src "%s" -thresh %s' %args)
-           
-        
-        ######## end temp testing block
-            
-        #Clip the buffered flow direction & pitfilled DEM files to set to same
-        #extents (DinfFlowDir generates outputs that that are smaller
-        # by one pixel-width around the edge than the input pitfilled DEM
+
         utils.clip_raster(flowdir_buff_uri, ws_uri, flowdir_uri, 1.0)
         utils.clip_raster(dem_filled_buff_uri, ws_uri, dem_filled_uri, 1.0)
             
@@ -495,9 +459,9 @@ def impute_hand(paths_dict, cellsize):
     if cellsize == 1.0 and not os.path.exists(hand_1m_imputed_uri):
         print ('Imputing missing values in 1m HAND layer using 7.4m HAND layer')
 
-        print ('\tReading 7m HAND raster to array')
-        hand_lcb_7m_uri = paths_dict['hand_lcb_7point4m_uri']
-        hand_7m_array, hand_7m_gt, _ = utils.raster2array(hand_lcb_7m_uri)
+        print ('\tReading 5m HAND raster to array')
+        hand_5m_uri = os.path.join(paths_dict['huc8_derivatives_dir'], 'HAND.tif')
+        hand_5m_array, hand_5m_gt, _ = utils.raster2array(hand_5m_uri)
 
         print ('\tReading 1m HAND raster to array')
         hand_1m_array, hand_1m_gt, _ = utils.raster2array(hand_1m_uri) 
@@ -521,16 +485,16 @@ def impute_hand(paths_dict, cellsize):
         y = hand_1m_gt[3] - ndval_rows 
 
         print ('\tGetting values indices in 7m HAND array')
-        c_7m = np.floor((x - hand_7m_gt[0]) / hand_7m_gt[1]).astype(int)
-        r_7m = np.floor((hand_7m_gt[3] - y) / hand_7m_gt[1]).astype(int)
+        c_5m = np.floor((x - hand_5m_gt[0]) / hand_5m_gt[1]).astype(int)
+        r_5m = np.floor((hand_5m_gt[3] - y) / hand_5m_gt[1]).astype(int)
         
         print ('\tInserting imputed values into 1m array')
-        imputed_val = hand_7m_array[r_7m, c_7m]
+        imputed_val = hand_5m_array[r_5m, c_5m]
         hand_1m_array[ndval_rows, ndval_cols] = imputed_val
 
         print ('\tExporting imputed array to raster')
         utils.array2raster(hand_1m_array, hand_1m_uri, hand_1m_imputed_uri)
-        paths_dict['hand_uri'] = hand_1m_imputed_uri
+    paths_dict['hand_uri'] = hand_1m_imputed_uri
 
     return paths_dict
 
@@ -555,7 +519,7 @@ def generate_theissen(paths_dict, cellsize):
     ### Calculate Theissen polygons
     if not os.path.exists(thiessen_shp_uri):
         print ('Calculating Thiessen polygons for stream vertice points')
-        utils.thiessen_polygons(streampoints_uri, watershed_uri, thiessen_dir)
+        utils.thiessen_polygons(streampoints_uri, watershed_uri, thiessen_dir, hand_uri)
 
     return None
 
