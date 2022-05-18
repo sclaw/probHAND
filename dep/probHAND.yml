@@ -1,0 +1,22 @@
+name: madriver
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.7
+  - spyder
+  - numpy
+  - pandas
+  - scipy
+  - seaborn
+  - matplotlib
+  - geopandas
+  - gdal=2.4.2
+  - shapely
+  - pip
+  - xlrd
+  - xlsxwriter
+  - tqdm
+  - pip:                            # Packages installed from PyPI
+    - anytree
+
