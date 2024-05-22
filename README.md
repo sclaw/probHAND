@@ -36,7 +36,7 @@ To install and run the probHAND model, follow these steps:
     ```bash
     conda env create -f probHAND.yml
     ```
-4. Ensure that you have <a href="(https://hydrology.usu.edu/taudem/taudem5/)">TauDEM</a> installed 
+4. Ensure that you have TauDEM installed (https://hydrology.usu.edu/taudem/taudem5/)
 
 ## Usage
 
