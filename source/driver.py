@@ -6,7 +6,7 @@
 
 import os
 import gc
-import ogr
+from osgeo import ogr
 import itertools
 import numpy as np
 import pandas as pd
@@ -133,7 +133,7 @@ def monte_carlo(paths_dict, data_dict, rvs_dict, n, huc12_id, ws_id, cellsize, r
 
     # Generate base RC
     print(f'\t{ctime()} - Generating base rating curves')
-    spoof_rc_df = pd.DataFrame()
+    spoof_rc_df = pd.DataFrame(columns=['N_SIM', 'RESOLUTION', 'REACH', 'STAGE', 'LENGTH', 'VOLUME', 'SA', 'XS_AREA', 'H_RADIUS', 'MANNINGS', 'SLOPE', 'DISCHARGE'])
     base_rc = generate_base_rc(0, spoof_rc_df, data_dict, reach_list, cellsize)
 
     length_log = list()
@@ -248,6 +248,7 @@ def generate_base_rc(i, rc_df, data_dict, reach_list, cellsize):
         reach_masks[reach] = (thiessen_array==reach)
 
     ### Iterate over through user-specified stages and over reaches in HUC12
+    r = 0
     for stage in constants.stage_list:
         for reach in reach_list:
             reach = float(reach)
@@ -262,7 +263,7 @@ def generate_base_rc(i, rc_df, data_dict, reach_list, cellsize):
                            (cellsize**2))
 
             ### Calculate cross-sectional area
-            length = float(stream_df['Length'][stream_df['Code']==reach])
+            length = float(stream_df['Length'][stream_df['Code']==reach].values[0])
             # length = float(stream_df['SWLENGTH'][stream_df['Code']==reach])
             xs_area = volume / length
 
@@ -297,21 +298,20 @@ def generate_base_rc(i, rc_df, data_dict, reach_list, cellsize):
                  (np.sqrt(slope)) * (xs_area))
             if volume == 0: Q = 0
 
-            rc_row_dict = {
-                'N_SIM': int(i),
-                'RESOLUTION': cellsize,
-                'REACH': int(reach),
-                'STAGE': stage,
-                'LENGTH': length,
-                'VOLUME': volume,
-                'SA': surface_area,
-                'XS_AREA': xs_area,
-                'H_RADIUS': hydraulic_radius,
-                'MANNINGS': mannings_mean,
-                'SLOPE': slope,
-                'DISCHARGE': Q
-                }
-            rc_df = rc_df.append(rc_row_dict, ignore_index=True)
+            rc_df.loc[r, 'N_SIM'] = int(i)
+            rc_df.loc[r, 'RESOLUTION'] = cellsize
+            rc_df.loc[r, 'REACH'] = int(reach)
+            rc_df.loc[r, 'STAGE'] = stage
+            rc_df.loc[r, 'LENGTH'] = length
+            rc_df.loc[r, 'VOLUME'] = volume
+            rc_df.loc[r, 'SA'] = surface_area
+            rc_df.loc[r, 'XS_AREA'] = xs_area
+            rc_df.loc[r, 'H_RADIUS'] = hydraulic_radius
+            rc_df.loc[r, 'MANNINGS'] = mannings_mean
+            rc_df.loc[r, 'SLOPE'] = slope
+            rc_df.loc[r, 'DISCHARGE'] = Q
+
+            r += 1
 
     return rc_df
 
