@@ -1,0 +1,11 @@
+name: probHAND
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python
+  - numpy
+  - pandas
+  - scipy
+  - gdal
+  - geopandas
