@@ -80,7 +80,7 @@ def main():
         resolutions = [7.4, 1.0] 
         resolutions = [1.0]
     else:
-        resolutions = args.resolutions
+        resolutions = [float(r) for r in args.resolutions.strip('[]').split(',')]
 
     ### Initialize list of percentiles to run
     if args.percentiles == None:    
