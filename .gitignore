@@ -1,2 +1,4 @@
 .idea
+.vscode
 source/__pycache__
+*working*
