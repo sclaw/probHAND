@@ -5,10 +5,10 @@
 ### Created by: Jesse Gourevitch
 
 import os
-import ogr
-import osr
+from osgeo import ogr
+from osgeo import osr
 import sys
-import gdal
+from osgeo import gdal
 import scipy
 import numpy as np
 import pandas as pd
@@ -297,7 +297,7 @@ def array2raster(array, raster_template_uri, raster_uri,raster_output_settings =
     ### Create raster
     driver = gdal.GetDriverByName('GTiff')
     raster = driver.Create(raster_uri, array.shape[1], array.shape[0], 1, 
-        gdal.GDT_Float32, options=['BIGTIFF=IF_SAFER'])
+        gdal.GDT_Float32, options=['BIGTIFF=IF_SAFER', 'TFW=YES', 'COMPRESS=LZW'])
     raster.SetGeoTransform((gt[0], gt[1], 0, gt[3], 0, gt[5]))
     band = raster.GetRasterBand(1)
     
