@@ -5,8 +5,8 @@
 ### Created by: Jesse Gourevitch
 
 import os
-import ogr
-import gdal
+from osgeo import ogr
+from osgeo import gdal
 import platform
 import numpy as np
 import pandas as pd
