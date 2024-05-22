@@ -67,4 +67,4 @@ This project is licensed under the GNU General Public License - see the [LICENSE
 
 ## Contact
 
-For any questions or issues, please contact us at [Rebecca.Diehl@uvm.edu](mailto:Rebecca.Diehl@uvm.edu) and [Scott.Lawson@uvm.edu](mailto:Scott.Lawson@uvm.edu).
+For any questions or issues, please direct general inquiries to [Rebecca.Diehl@uvm.edu](mailto:Rebecca.Diehl@uvm.edu) and inquiries on this codebase to [Scott.Lawson@uvm.edu](mailto:Scott.Lawson@uvm.edu).
